@@ -27,6 +27,9 @@ is linted by default, grounding/posting notes are ignored. Use --full to lint ev
 Exit codes: 0 PASS, 1 HARD violations (or a failed selfcheck), 2 nothing to lint /
 unreadable input. Only HARD violations fail the gate; SOFT is human judgment.
 """
+import json
+import os
+import pathlib
 import re
 import sys
 
@@ -228,6 +231,134 @@ NON_DEMOTABLE = {"em-dash", "✅/❌ list-leader"}
 # is content, not a mention, so it stays HARD, otherwise "wrap the line in quotes"
 # is a one-keystroke evasion.
 MAX_QUOTE_MENTION = 60
+
+
+# ── Making the rules yours ────────────────────────────────────────────────────
+# The rules above are one writer's bans. The regexes are the tuned part and are
+# deliberately NOT exposed as editable strings, because a hand-edited regex is how
+# you silently open a false negative. What IS exposed is the part that is genuinely
+# a preference: which words you ban, which rules apply to you at all, and any extra
+# phrase you personally never want to publish.
+#
+# Precedence: --rules FILE  >  $VOICE_GATE_RULES  >  ./voice-rules.json  >  built-ins.
+# No file anywhere means the built-in rules run unchanged.
+
+RULES_FILENAME = "voice-rules.json"
+
+STARTER_RULES = {
+    "_readme": (
+        "Your voice, your bans. Delete any key you don't want to change; every key "
+        "is optional and anything absent falls back to the built-in rule. Run "
+        "`python3 voice_check.py --list-rules` to see what is actually active."
+    ),
+    "extend_banned_words": ["leverage", "synergy", "unlock"],
+    "_extend_banned_words_help": (
+        "Added to the built-in banned-word list. Use this for words you personally "
+        "never say. Matching is case-insensitive and whole-word."
+    ),
+    "banned_words": None,
+    "_banned_words_help": (
+        "Set this to a full list to REPLACE the built-in list instead of extending "
+        "it, or to [] to switch the banned-word rule off entirely. Leave null to "
+        "keep the built-ins."
+    ),
+    "severity_overrides": {"hook-bait": "SOFT"},
+    "_severity_overrides_help": (
+        "Retune a built-in rule by its label: HARD (blocks), SOFT (warns), or OFF "
+        "(removed). Labels are exactly what --list-rules prints. This is the main "
+        "knob: a rule that fits this author's voice may not fit yours, and turning "
+        "one OFF is a legitimate choice, not a workaround."
+    ),
+    "custom_rules": [
+        {
+            "severity": "HARD",
+            "label": "example: 'in today's world' opener",
+            "pattern": "\\bin today'?s (?:world|landscape|economy)\\b",
+            "hint": "cut it and open on the actual moment",
+        }
+    ],
+    "_custom_rules_help": (
+        "Your own rules. `pattern` is a Python regex matched case-insensitively "
+        "against the prose with markdown stripped. Start literal and simple; a "
+        "regex you cannot read is a rule you cannot trust. Add a fixture for it in "
+        "your own archive sweep before relying on it."
+    ),
+    "max_quote_mention": 60,
+    "_max_quote_mention_help": (
+        "Max characters of a double-quoted span still treated as MENTIONING a tell "
+        "rather than using it. Raise it if you quote longer passages; a whole quoted "
+        "sentence is content, not a mention, which is why this is capped at all."
+    ),
+}
+
+
+def _rules_path(explicit=None):
+    if explicit:
+        return pathlib.Path(explicit)
+    env = os.environ.get("VOICE_GATE_RULES")
+    if env:
+        return pathlib.Path(env)
+    return pathlib.Path.cwd() / RULES_FILENAME
+
+
+def load_user_rules(explicit=None):
+    """Apply a user rules file over the built-ins. Returns a description of what changed."""
+    global BANNED_WORDS, RULES, MAX_QUOTE_MENTION
+    path = _rules_path(explicit)
+    if not path.exists():
+        return None
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        # Loud, not silent. A broken rules file must never look like "you passed".
+        print(f"ERROR: could not read rules file {path}: {exc}", file=sys.stderr)
+        raise SystemExit(2)
+    cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
+
+    if isinstance(cfg.get("banned_words"), list):
+        BANNED_WORDS = list(cfg["banned_words"])
+    for w in cfg.get("extend_banned_words") or []:
+        if w not in BANNED_WORDS:
+            BANNED_WORDS.append(w)
+
+    overrides = {k.lower(): str(v).upper() for k, v in (cfg.get("severity_overrides") or {}).items()}
+    if overrides:
+        rebuilt = []
+        for sev, label, rx, hint in RULES:
+            want = overrides.get(label.lower())
+            if want == "OFF":
+                continue
+            rebuilt.append((want if want in ("HARD", "SOFT") else sev, label, rx, hint))
+        RULES = rebuilt
+
+    for cr in cfg.get("custom_rules") or []:
+        try:
+            rx = re.compile(cr["pattern"], re.I | re.M)
+        except (re.error, KeyError, TypeError) as exc:
+            print(f"ERROR: bad custom rule {cr!r}: {exc}", file=sys.stderr)
+            raise SystemExit(2)
+        sev = str(cr.get("severity", "HARD")).upper()
+        RULES.append((sev if sev in ("HARD", "SOFT") else "HARD",
+                      cr.get("label", "custom rule"), rx, cr.get("hint", "")))
+
+    if isinstance(cfg.get("max_quote_mention"), int):
+        MAX_QUOTE_MENTION = cfg["max_quote_mention"]
+
+    return path
+
+
+def list_rules(path):
+    print(f"rules file : {path if path else 'none (built-in rules only)'}")
+    print(f"quote-mention cap : {MAX_QUOTE_MENTION} chars")
+    print()
+    for sev in ("HARD", "SOFT"):
+        rows = [lbl for s, lbl, _, _ in RULES if s == sev]
+        print(f"{sev} ({len(rows)}):")
+        for lbl in rows:
+            print(f"  {lbl}")
+        print()
+    print(f"banned words ({len(BANNED_WORDS)}): {', '.join(BANNED_WORDS) or '(none)'}")
+    return 0
 
 
 def quoted_spans(prose):
@@ -557,14 +688,47 @@ def selfcheck():
     return 0 if ok else 1
 
 
+def _flag_value(argv, name):
+    if name in argv:
+        i = argv.index(name)
+        if i + 1 < len(argv):
+            return argv[i + 1]
+    for a in argv:
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return None
+
+
 def main(argv):
-    if "--selfcheck" in argv:
-        return selfcheck()
     if "--help" in argv or "-h" in argv:
         print(__doc__)
         return 0
+    if "--init" in argv:
+        dest = pathlib.Path(_flag_value(argv, "--init") or RULES_FILENAME)
+        if dest.exists():
+            print(f"ERROR: {dest} already exists, not overwriting", file=sys.stderr)
+            return 2
+        dest.write_text(json.dumps(STARTER_RULES, indent=2) + "\n", encoding="utf-8")
+        print(f"wrote {dest}")
+        print("Edit it, then run: python3 voice_check.py --list-rules")
+        return 0
+
+    # Selfcheck runs against the BUILT-IN rules on purpose: it is the regression
+    # suite for this engine, not for your customisations. Sweep your own archive
+    # to test those.
+    if "--selfcheck" in argv:
+        return selfcheck()
+
+    loaded = load_user_rules(_flag_value(argv, "--rules"))
+    if "--list-rules" in argv:
+        return list_rules(loaded)
     full = "--full" in argv
-    args = [a for a in argv[1:] if not a.startswith("-") or a == "-"]
+    skip = set()
+    for fl in ("--rules", "--init"):
+        if fl in argv:
+            skip.add(argv.index(fl) + 1)
+    args = [a for i, a in enumerate(argv)
+            if i > 0 and i not in skip and (not a.startswith("-") or a == "-")]
     try:
         if not args or args[0] == "-":
             return report(sys.stdin.read(), "stdin", full=full)

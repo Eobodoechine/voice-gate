@@ -7,14 +7,42 @@ Any writing prompt can *describe* a voice. It cannot reach into the draft afterw
 and prove the draft obeyed it. This does. Point it at a draft and it exits non-zero
 if the draft carries a construct you have banned.
 
+Python 3, standard library only. Nothing to install, no dependencies, no API key.
+
+## Quick start
+
+```bash
+git clone https://github.com/Eobodoechine/voice-gate.git
+cd voice-gate
+
+echo "This isn't just a tool — it's a system. The lesson? ship." | python3 voice_check.py -
+```
+
+That fails on three separate rules at once (the em-dash, the "isn't just X" pivot, and
+the "The lesson?" wrap-up), which is the fastest way to see what the thing does. Then
+make it yours:
+
+```bash
+python3 voice_check.py --init          # writes voice-rules.json for your own bans
+python3 voice_check.py --list-rules    # shows exactly which rules are active
+```
+
+## Everyday use
+
 ```bash
 python3 voice_check.py DRAFT.md          # lint a file
 python3 voice_check.py -                 # lint stdin
 python3 voice_check.py DRAFT.md --full   # lint the whole file, not just the post body
-python3 voice_check.py --selfcheck       # run the built-in GOOD/BAD fixtures
+python3 voice_check.py --rules mine.json DRAFT.md   # use a specific rules file
+python3 voice_check.py --selfcheck       # the engine's built-in GOOD/BAD fixtures
 ```
 
-Python 3, standard library only. Nothing to install.
+Exit codes: **0** pass, **1** hard violations, **2** nothing to lint or a broken input.
+Exit 2 is deliberately distinct from 1, so a missing file never looks like a voice
+violation to a script that only reads the exit code.
+
+If a file has a `## The post` heading, only that section is linted by default, so your
+own notes and grounding do not count against the draft. `--full` lints everything.
 
 ## What it catches
 
@@ -57,22 +85,80 @@ which is why `--selfcheck` exists and why you should run it after every rule edi
 
 ## Making it yours
 
-The rules shipped here are one writer's bans. Yours will differ, and the useful part
-is the shape rather than the list.
+The rules that ship here are one writer's bans. Yours will differ, and the useful part
+is the shape rather than the list. You do not edit Python to change them.
 
-1. Edit the constants at the top of `voice_check.py` (banned words, the phrase lists).
-2. Add a GOOD fixture for a real sentence of yours that a new rule must not break, and
-   a BAD fixture for the exact move you are banning.
-3. Run `python3 voice_check.py --selfcheck`.
-4. Sweep your own archive. Every piece you actually published should pass:
+```bash
+python3 voice_check.py --init          # writes voice-rules.json, commented
+python3 voice_check.py --list-rules    # shows exactly what is active
+```
+
+`voice-rules.json` is picked up automatically from the current directory. Override with
+`--rules path/to/file.json` or the `VOICE_GATE_RULES` environment variable. No file
+anywhere means the built-in rules run unchanged.
+
+Every key is optional. Anything you leave out falls back to the built-in behavior.
+
+```jsonc
+{
+  // Words you personally never say, added to the built-in list.
+  "extend_banned_words": ["leverage", "synergy", "unlock"],
+
+  // Or replace the list outright. [] switches the banned-word rule off entirely.
+  "banned_words": null,
+
+  // Retune any built-in rule by its label: HARD blocks, SOFT warns, OFF removes it.
+  // Labels are exactly what --list-rules prints.
+  "severity_overrides": { "hook-bait": "SOFT", "em-dash": "OFF" },
+
+  // Your own rules. Matched case-insensitively against the prose, markdown stripped.
+  "custom_rules": [
+    { "severity": "HARD",
+      "label": "in today's world opener",
+      "pattern": "\\bin today'?s (?:world|landscape|economy)\\b",
+      "hint": "cut it and open on the actual moment" }
+  ],
+
+  // Longest double-quoted span still treated as MENTIONING a tell rather than using it.
+  "max_quote_mention": 60
+}
+```
+
+**Turning a rule OFF is a legitimate choice.** Every rule here came from one person's
+taste. If you like em-dashes, turn the em-dash rule off and keep the rest. A gate you
+have argued with is worth more than one you inherited.
+
+### The regexes are deliberately not editable
+
+You can add your own patterns, but the built-in ones are not exposed as editable strings.
+That is on purpose. Loosening a tuned regex to kill a false positive quietly opens a
+false negative, which happened here once: narrowing the pivot rule to require a comma let
+*"It's not a tool. It's a system."* straight through. Both directions are pinned by
+fixtures now. If a built-in rule genuinely does not fit you, turn it `OFF` and write your
+own rather than filing down the one that is tested.
+
+### Then sweep your own archive
+
+This is the step people skip, and it is the one that tells you whether your rules are
+right. Every piece you actually published should pass:
 
 ```bash
 for f in posts/*.md; do python3 voice_check.py "$f" >/dev/null 2>&1 || echo "NOT-CLEAN $f"; done
 ```
 
-If a rule change makes something you really wrote fail, the rule is wrong. That sweep
-is the regression suite, and it catches exit code 2 ("nothing to lint") which a
-`grep FAIL` would silently skip.
+If a rule makes something you really wrote fail, the rule is wrong. That sweep is your
+regression suite, and it catches exit code 2 ("nothing to lint") which a `grep FAIL`
+would silently skip.
+
+## Running the tests
+
+```bash
+python3 voice_check.py --selfcheck    # the engine's own GOOD/BAD fixtures
+pip install pytest && pytest tests/ -q # 13 tests for the user-rules layer
+```
+
+`--selfcheck` deliberately ignores your rules file. It is the regression suite for the
+engine, not for your customisations; sweeping your own archive is how you test those.
 
 ## What it deliberately cannot do
 

@@ -4,26 +4,26 @@ Grounding (not linted, kept out of the post body by the `## The post` convention
 
 - Repo: https://github.com/Eobodoechine/voice-gate
 - Claims used and where they come from:
-  - "exits non-zero on a banned construct" / "Python 3, stdlib only, no deps, no API key" -> README quick start + intro
-  - The comma-narrowing regression that let "It's not a tool. It's a system." through -> README, "Precision beats coverage"
-  - Quoted-mention demotion, and typographic tells never demoted -> README, "Mention is not use."
-  - Rules live in voice-rules.json, OFF is a legitimate choice -> README, "Making it yours"
-- Voice reference: the author's own Qwen Code post (July 2026). First person, long
-  comma-joined sentences, concrete specifics, closes on a stance rather than a takeaway.
+  - "exits non-zero on a banned construct" / stdlib only, no install, no API key -> README quick start
+  - The loosened-rule regression that let "It's not a tool. It's a system." through -> README, "Precision beats coverage"
+  - "The lesson my dad gave me" passes / "The lesson?" fails -> README precision table
+- Voice reference: the author's own Qwen Code post (July 2026). Opens on a concrete
+  personal moment, long comma-joined sentences, admits something, closes on a stance.
+- Length target: ~220 words, matching the Qwen post, not a README restatement.
 - This draft passes `python3 voice_check.py drafts/linkedin-voice-gate.md`.
 
 ## The post
 
-I kept writing prompts that described my voice, and the drafts kept coming back carrying the same tells anyway, em-dashes everywhere, that "it's not X, it's Y" pivot, a tidy little takeaway bolted onto the end. A prompt can describe a voice. It has no way to reach into the finished draft afterward and prove the draft actually obeyed it.
+I kept telling the model how I write, and it kept handing me back drafts with em-dashes all over them, that little "it's not X, it's Y" flip, a neat takeaway glued onto the end like a bow. So I'd go fix it by hand every time, and some nights I'd miss one and post it anyway.
 
-So I stopped asking nicely and wrote a linter for it. Point it at a draft and it exits non-zero if the draft carries a construct I have banned. Python 3, standard library, no dependencies, no API key, nothing to install.
+What I finally had to admit is that a prompt can only describe my voice. It has no way to look at the finished draft and tell me whether the draft actually listened.
 
-The tuning turned out to be the actual work, because every rule has to fire on the banned move and stay quiet on the ordinary sentence that looks identical to it. "The lesson my dad gave me" is fine and "The lesson?" is not. "It's not fun but it's worth it" is fine and the pivot is not. I got this wrong once, I narrowed the pivot rule to require a comma so it would stop flagging something innocent, and that quietly let "It's not a tool. It's a system." walk straight through. Killing a false positive had opened a false negative, and I only caught it because I had fixtures pinning both directions.
+So I wrote something that does. It reads a draft and fails if it finds a construct I have banned. Python 3, standard library, nothing to install, no API key.
 
-The other thing I had to solve is that writing about AI writing means quoting the tells, and I did not want my own post failing on the words I was making fun of. So a phrase inside a short quoted span gets demoted to a warning instead of a block. Typographic tells never get that pass, because there is no way to mention an em-dash without the reader simply seeing one.
+The hard part was never catching the tells, it was not catching everything else. "The lesson my dad gave me" has to pass. "The lesson?" has to fail. I broke this once, I loosened a rule to shut up a false alarm, and that quietly let "It's not a tool. It's a system." sail straight through. The annoying fix had opened a hole I could not see.
 
-The rules that ship are mine and yours will be different, which is why they live in a JSON file you edit rather than Python you fork, and switching one off is a legitimate choice. If you like em-dashes, turn that rule off and keep the rest. A gate you have argued with is worth more than one you inherited.
+I still write my own posts. I just stopped trusting myself to catch my own tells at 1am, and now I do not have to.
 
-I ran this post through it before posting.
+This one went through it before it went up.
 
 github.com/Eobodoechine/voice-gate
